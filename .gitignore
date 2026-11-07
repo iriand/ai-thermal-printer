@@ -19,3 +19,7 @@ dist/
 .idea/
 .vscode/
 .DS_Store
+
+# Imported project
+data/
+README.md.before-import

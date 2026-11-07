@@ -1,0 +1,34 @@
+{
+  "food": {
+    "title": "ДОМАШНЯЯ КУХНЯ",
+    "description": "Наклейка или чек для еды: название, дата приготовления, примечание. Не рассчитывать сроки хранения.",
+    "fields": {
+      "name": {"question": "Как называется блюдо или продукт?"},
+      "prepared": {"question": "Какая дата приготовления? Укажите точную дату."},
+      "notes": {"required": false, "question": "Добавить примечание?"}
+    },
+    "lines": [{"field": "name", "large": true}, {"field": "prepared", "label": "Приготовлено: "}, {"field": "notes"}]
+  },
+  "task": {
+    "title": "СЕМЕЙНАЯ ЗАДАЧА",
+    "description": "Семейное поручение: что сделать, кому и к какому сроку.",
+    "fields": {
+      "task": {"question": "Что нужно сделать?"},
+      "person": {"question": "Кому поручить задачу?"},
+      "due": {"required": false, "question": "К какому сроку?"}
+    },
+    "lines": [{"field": "task", "large": true}, {"field": "person", "label": "Кому: "}, {"field": "due", "label": "Срок: "}]
+  },
+  "shopping": {
+    "title": "СПИСОК ПОКУПОК",
+    "description": "Список товаров; каждый товар на отдельной строке, сохранять указанные количества.",
+    "fields": {"items": {"question": "Что купить? Можно списком с количествами."}},
+    "lines": [{"field": "items"}]
+  },
+  "note": {
+    "title": "ЗАМЕТКА",
+    "description": "Произвольная записка или короткое сообщение.",
+    "fields": {"text": {"question": "Какой текст напечатать?"}},
+    "lines": [{"field": "text"}]
+  }
+}

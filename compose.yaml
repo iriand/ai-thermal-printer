@@ -1,0 +1,15 @@
+services:
+  thermal-bot:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - bot-data:/app/data
+      - ./templates.json:/app/templates.json:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+volumes:
+  bot-data:
