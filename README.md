@@ -113,7 +113,32 @@ SQLite и отправляются в Telegram в виде изображени�
 Документация: [авторизация Jira Cloud](https://developer.atlassian.com/cloud/jira/platform/basic-auth-for-rest-apis/),
 [получение задачи](https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issues/#api-rest-api-3-issue-issueidorkey-get).
 
-В `templates.json` есть `jira`, `food`, `task`, `shopping`, `note`. Шаблон — объект с названием, описанием, полями и строками. Например:
+В `templates.json` есть `jira`, `food`, `task`, `shopping`, `note`. Шаблон — объект с названием, описанием, полями и строками.
+
+В любом месте массива `lines` можно вставить горизонтальный разделитель:
+
+```json
+{"separator": true, "width_mm": 2}
+```
+
+`width_mm` — толщина линии в миллиметрах, по умолчанию **2 мм**; например,
+`0.3` задаст тонкий разделитель. Длина линии равна области печати между
+боковыми отступами. Над и под линией остаётся по 8 точек свободного места.
+Для перевода миллиметров в точки используется `PRINTER_DPI` из окружения,
+по умолчанию `203` (2 мм округляются до 16 точек). Если разрешение принтера
+другое, задайте его в `.env`. Разделитель — отдельная строка массива:
+
+```json
+[
+  {"field": "summary", "large": true},
+  {"separator": true},
+  {"field": "status", "label": "Статус: "},
+  {"separator": true, "width_mm": 0.3},
+  {"qr": "url"}
+]
+```
+
+Пример пользовательского шаблона:
 
 ```json
 {

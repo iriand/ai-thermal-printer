@@ -4,6 +4,7 @@ import base64
 import io
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import re
@@ -144,11 +145,22 @@ def templates():
             raise ValueError('Jira templates require an issue_key input field')
         available = JIRA_RECEIPT_FIELDS if source == 'jira' else item['fields']
         for row in item['lines']:
+            if 'separator' in row:
+                if row['separator'] is not True or any(key in row for key in ('field', 'text', 'qr')):
+                    raise ValueError('Invalid separator in template')
+                separator_width_mm(row)
             if row.get('field') and row['field'] not in available:
                 raise ValueError('Unknown field in template')
             if 'qr' in row and (row['qr'] not in available or 'field' in row or 'text' in row):
                 raise ValueError('Invalid QR field in template')
     return data
+
+
+def separator_width_mm(row):
+    width = row.get('width_mm', 2)
+    if type(width) not in (int, float) or not math.isfinite(width) or width <= 0:
+        raise ValueError('Separator width_mm must be a positive number')
+    return width
 
 
 def render_qr(value, max_width):
@@ -176,6 +188,19 @@ def render(template, values, width=576):
     draw = ImageDraw.Draw(canvas)
     y = 20
     for row in [{'text': template['title'], 'large': True}] + template['lines']:
+        if row.get('separator') is True:
+            dpi = int(os.getenv('PRINTER_DPI', '203'))
+            if dpi <= 0:
+                raise ValueError('PRINTER_DPI must be positive')
+            thickness = separator_width_mm(row) * dpi / 25.4
+            if thickness > 15000:
+                raise ValueError('Слишком толстая линия: уменьшите width_mm.')
+            thickness = max(1, round(thickness))
+            if y + thickness + 16 > 15000:
+                raise ValueError('Слишком длинный чек: сократите текст.')
+            draw.rectangle((20, y + 8, width - 21, y + 8 + thickness - 1), fill=0)
+            y += thickness + 16
+            continue
         if 'qr' in row:
             value = values.get(row['qr'], '')
             if value:
