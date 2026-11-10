@@ -257,6 +257,8 @@ def templates():
             raise ValueError('Weather templates require a date input field')
         available = {'jira': JIRA_RECEIPT_FIELDS, 'weather': WEATHER_RECEIPT_FIELDS}.get(source, item['fields'])
         for row in item['lines']:
+            if 'hide' in row and type(row['hide']) is not bool:
+                raise ValueError('Template row hide must be true or false')
             if 'separator' in row:
                 if row['separator'] is not True or any(key in row for key in ('field', 'text', 'qr')):
                     raise ValueError('Invalid separator in template')
@@ -468,6 +470,8 @@ def render(template, values, width=576):
         raise ValueError('PRINT_SOURCE_NAME must be true or false')
     rows = ([{'text': template['title'], 'large': True}] if print_source == 'true' else []) + template['lines']
     for row in rows:
+        if row.get('hide') is True:
+            continue
         if row.get('separator') is True:
             amount, unit = separator_width(row)
             if unit == 'mm':

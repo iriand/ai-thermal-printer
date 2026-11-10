@@ -40,7 +40,7 @@
       {"field": "created", "label": "Создана: "},
       {"field": "due", "label": "Срок: "},
       {"field": "priority", "label": "Приоритет: "},
-      {"qr": "url"}
+      {"qr": "url", "hide": true}
     ]
   },
   "food": {
