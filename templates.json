@@ -8,7 +8,7 @@
     },
     "lines": [
       {"separator": true, "width": "1mm"},
-      {"field": "key", "icon": "issue_icon", "large": true, "invert": true},
+      {"field": "key", "icon": "issue_icon", "large": true, "invert": false},
       {"separator": true, "width": "1mm"},
       {"field": "summary", "large": true},
       {"separator": true, "width": "0.5mm"},
