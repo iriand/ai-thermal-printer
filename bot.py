@@ -420,7 +420,15 @@ def render(template, values, width=576):
     return buf.getvalue()
 
 
+def printer_feed_lines():
+    value = os.getenv('PRINTER_FEED_LINES', '3').strip()
+    if not re.fullmatch(r'[0-9]{1,3}', value) or not 0 <= int(value) <= 255:
+        raise ValueError('PRINTER_FEED_LINES must be an integer from 0 to 255')
+    return int(value)
+
+
 def escpos(png, cut=False):
+    feed_lines = printer_feed_lines()
     image = Image.open(io.BytesIO(png)).convert('1')
     width, height = image.size
     row_bytes = (width + 7) // 8
@@ -434,7 +442,9 @@ def escpos(png, cut=False):
                 if image.getpixel((x, start + y)) == 0:
                     bits[y * row_bytes + x // 8] |= 0x80 >> (x % 8)
         out.extend(b'\x1dv0\x00' + struct.pack('<HH', row_bytes, band_height) + bits)
-    out.extend(b'\n\n\n')
+    if feed_lines:
+        # Explicit standard line spacing and paper feed, before any cutter command.
+        out.extend(b'\x1b2\x1bd' + bytes([feed_lines]))
     if cut:
         out.extend(b'\x1dV\x00')
     return bytes(out)
@@ -538,6 +548,7 @@ class Bot:
         self.dry = os.getenv('DRY_RUN', 'true').lower() != 'false'
         if not self.dry and not os.environ.get('PRINTER_HOST'):
             raise ValueError('Set PRINTER_HOST for real printing')
+        printer_feed_lines()
         data = Path(os.getenv('DATA_DIR', str(ROOT / 'data')))
         data.mkdir(parents=True, exist_ok=True)
         self.store = Store(data / 'bot.sqlite')

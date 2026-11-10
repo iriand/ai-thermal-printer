@@ -41,7 +41,7 @@ class Tests(unittest.TestCase):
                 pos += width_bytes
         self.assertEqual(len(rows), source.height)
         self.assertEqual([p for row in rows for p in row], list(source.getdata()))
-        self.assertEqual(data[pos:], b'\n\n\n')
+        self.assertEqual(data[pos:], b'\x1b2\x1bd\x03')
         self.assertTrue(bot.escpos(png, True).endswith(b'\x1dV\x00'))
 
     def test_job_claim_owner_expiry_restart(self):
@@ -89,11 +89,12 @@ class Tests(unittest.TestCase):
             job = instance.store.new_job(1, png)
             update = {'callback_query': {'id': 'callback', 'from': {'id': 1}, 'data': 'print:'+job,
                 'message': {'chat': {'id': 1, 'type': 'private'}}}}
-            with patch.dict('os.environ', {'PRINTER_HOST': '127.0.0.1', 'PRINTER_PORT': str(listener.getsockname()[1]), 'PRINTER_CUT': 'false'}):
+            with patch.dict('os.environ', {'PRINTER_HOST': '127.0.0.1', 'PRINTER_PORT': str(listener.getsockname()[1]), 'PRINTER_CUT': 'false', 'PRINTER_FEED_LINES': '5'}):
                 instance.handle(update)
                 instance.handle(update)
+                expected = bot.escpos(png)
             worker.join(3)
-            self.assertEqual(received, [bot.escpos(png)])
+            self.assertEqual(received, [expected])
             self.assertEqual(instance.store.db.execute('SELECT status FROM jobs WHERE id=?', (job,)).fetchone()[0], 'sent')
 
     def test_ai_schema_and_mapping_with_fixture(self):
