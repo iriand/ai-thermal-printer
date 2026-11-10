@@ -1,4 +1,27 @@
 {
+  "weather": {
+    "source": "weather",
+    "title": "ПОГОДА НА ДЕНЬ",
+    "description": "Прогноз погоды для города из окружения: сегодня, завтра, послезавтра или указанная дата. Температура и осадки загружаются из погодного сервиса.",
+    "fields": {
+      "date": {"required": false, "question": "На какой день нужен прогноз?"}
+    },
+    "lines": [
+      {"field": "location", "large": true},
+      {"field": "date", "large": true},
+      {"field": "conditions"},
+      {"separator": true, "width": "0.3mm"},
+      {"field": "temperature_max", "label": "Максимум: "},
+      {"field": "temperature_min", "label": "Минимум: "},
+      {"field": "precipitation_probability", "label": "Осадки, макс.: "},
+      {"separator": true, "width": "0.3mm"},
+      {"text": "Час / °C / осадки, %"},
+      {"field": "hourly"},
+      {"separator": true, "width": "0.3mm"},
+      {"field": "timezone"},
+      {"field": "provider", "label": "Прогноз: "}
+    ]
+  },
   "jira": {
     "source": "jira",
     "title": "JIRA",
