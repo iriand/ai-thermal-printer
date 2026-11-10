@@ -27,6 +27,19 @@ ENV = {'WEATHER_CITY': 'Haifa', 'WEATHER_COUNTRY_CODE': 'il'}
 
 
 class WeatherTests(unittest.TestCase):
+    def test_english_city_falls_back_when_russian_search_returns_no_results(self):
+        location = {'results': [{'name': 'Petah Tikva', 'country_code': 'IL', 'latitude': 32.0888, 'longitude': 34.88666}]}
+        with patch.dict(os.environ, {'WEATHER_CITY': 'Petah Tikva', 'WEATHER_COUNTRY_CODE': 'IL'}), \
+             patch.object(bot, 'weather_json', side_effect=[{}, location, FORECAST]) as api:
+            values = bot.weather_forecast()
+        self.assertEqual(api.call_args_list[0].args[1]['language'], 'ru')
+        self.assertEqual(api.call_args_list[1].args[1]['language'], 'en')
+        for call in api.call_args_list[:2]:
+            self.assertEqual(call.args[1]['name'], 'Petah Tikva')
+            self.assertEqual(call.args[1]['countryCode'], 'IL')
+        self.assertIn('Petah Tikva', values['location'])
+        self.assertEqual(api.call_count, 3)
+
     def test_city_and_forecast_requests_use_env_and_local_time(self):
         with patch.dict(os.environ, ENV), patch.object(bot, 'weather_json', side_effect=[LOCATION, FORECAST]) as api:
             values = bot.weather_forecast()

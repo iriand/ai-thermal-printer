@@ -86,6 +86,10 @@ def weather_forecast(day='today'):
         params['countryCode'] = country
     locations = weather_json('https://geocoding-api.open-meteo.com/v1/search', params).get('results') or []
     if not locations:
+        # The geocoder can match English names differently when language=ru.
+        locations = weather_json('https://geocoding-api.open-meteo.com/v1/search',
+                                 dict(params, language='en')).get('results') or []
+    if not locations:
         raise ValueError('Город не найден. Проверьте WEATHER_CITY и WEATHER_COUNTRY_CODE.')
     location = locations[0]
     try:

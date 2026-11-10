@@ -17,8 +17,8 @@ URL = 'https://example.atlassian.net/browse/APP-123'
 class QrTests(unittest.TestCase):
     def test_jira_template_uses_qr_instead_of_url_text(self):
         lines = bot.templates()['jira']['lines']
-        self.assertIn({'qr': 'url'}, lines)
-        self.assertNotIn({'field': 'url'}, lines)
+        self.assertTrue(any(row.get('qr') == 'url' for row in lines))
+        self.assertFalse(any(row.get('field') == 'url' for row in lines))
 
     def test_qr_fits_supported_paper_widths_and_has_white_quiet_zone(self):
         for width in (384, 512, 576):
