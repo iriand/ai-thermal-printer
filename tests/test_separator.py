@@ -25,17 +25,19 @@ class SeparatorTests(unittest.TestCase):
                 self.assertEqual(image.crop((20, 96, width - 20, 104)).getextrema(), (255, 255))
 
     def test_custom_thickness_uses_configured_dpi(self):
-        for dpi, width_mm, expected in [(203, 0.3, 2), (300, 2, 24), (203, 0.01, 1)]:
-            with self.subTest(dpi=dpi, width_mm=width_mm), patch.dict(os.environ, {'PRINTER_DPI': str(dpi)}):
+        for dpi, size, large, expected in [(203, '0.3mm', False, 2), (300, '2mm', False, 24),
+                                          (203, '0.01mm', False, 1), (203, '1em', False, 26),
+                                          (300, '1em', True, 34), (203, '0.1em', False, 3)]:
+            with self.subTest(dpi=dpi, size=size, large=large), patch.dict(os.environ, {'PRINTER_DPI': str(dpi)}):
                 image = Image.open(io.BytesIO(bot.render({'title': 'Test', 'lines': [
-                    {'separator': True, 'width_mm': width_mm}]}, {}, 384))).convert('L')
+                    {'separator': True, 'width': size, 'large': large}]}, {}, 384))).convert('L')
                 self.assertEqual(image.getpixel((20, 79)), 255)
                 self.assertEqual(image.crop((20, 80, 364, 80 + expected)).getextrema(), (0, 0))
                 self.assertEqual(image.getpixel((20, 80 + expected)), 255)
 
     def test_separators_can_appear_between_text_and_qr_rows(self):
         values = {'url': 'https://example.atlassian.net/browse/APP-123'}
-        lines = [{'separator': True}, {'text': 'Task'}, {'separator': True, 'width_mm': 0.3}, {'qr': 'url'}, {'separator': True}]
+        lines = [{'separator': True}, {'text': 'Task'}, {'separator': True, 'width': '0.3mm'}, {'qr': 'url'}, {'separator': True}]
         png = bot.render({'title': 'JIRA', 'lines': lines}, values, 384)
         image = Image.open(io.BytesIO(png)).convert('L')
         bands = []
@@ -49,6 +51,8 @@ class SeparatorTests(unittest.TestCase):
     def test_invalid_separator_definitions_are_rejected(self):
         for row in [{'separator': False}, {'separator': True, 'text': 'mixed'},
                     {'separator': True, 'qr': 'value'}, {'separator': True, 'field': 'value'},
+                    *[{'separator': True, 'width': v} for v in (0, -1, True, '2', '1px', '203dpi', '0mm', '-1em', 'nanmm', None)],
+                    {'separator': True, 'width': '2mm', 'width_mm': 2},
                     *[{'separator': True, 'width_mm': v} for v in (0, -1, True, '2', None, float('nan'), float('inf'))]]:
             with self.subTest(row=row), patch.object(Path, 'read_text', return_value=json.dumps({
                 'note': {'fields': {'value': {}}, 'lines': [row]}})):
@@ -56,9 +60,19 @@ class SeparatorTests(unittest.TestCase):
                     bot.templates()
 
     def test_separator_cannot_overflow_receipt(self):
-        for lines in [[{'separator': True, 'width_mm': 2000}], [{'separator': True}] * 1000]:
+        for lines in [[{'separator': True, 'width': '2000mm'}], [{'separator': True}] * 1000]:
             with self.subTest(count=len(lines)), self.assertRaises(ValueError):
                 bot.render({'title': 'Test', 'lines': lines}, {})
+
+    def test_legacy_mm_matches_new_string_units(self):
+        template = {'title': 'Test', 'lines': [{'separator': True, 'width_mm': 0.3}]}
+        legacy = bot.render(template, {})
+        template['lines'] = [{'separator': True, 'width': '0.3mm'}]
+        self.assertEqual(legacy, bot.render(template, {}))
+
+    def test_unit_parser_accepts_fractional_values_and_whitespace(self):
+        self.assertEqual(bot.separator_width({'width': ' .1 em '}), (0.1, 'em'))
+        self.assertEqual(bot.separator_width({}), (2, 'mm'))
 
 
 if __name__ == '__main__':

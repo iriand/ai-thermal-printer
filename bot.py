@@ -148,7 +148,7 @@ def templates():
             if 'separator' in row:
                 if row['separator'] is not True or any(key in row for key in ('field', 'text', 'qr')):
                     raise ValueError('Invalid separator in template')
-                separator_width_mm(row)
+                separator_width(row)
             if row.get('field') and row['field'] not in available:
                 raise ValueError('Unknown field in template')
             if 'qr' in row and (row['qr'] not in available or 'field' in row or 'text' in row):
@@ -156,11 +156,22 @@ def templates():
     return data
 
 
-def separator_width_mm(row):
-    width = row.get('width_mm', 2)
-    if type(width) not in (int, float) or not math.isfinite(width) or width <= 0:
-        raise ValueError('Separator width_mm must be a positive number')
-    return width
+def separator_width(row):
+    if 'width_mm' in row:
+        # Keep existing templates working while new templates use unit strings.
+        legacy = row['width_mm']
+        if 'width' in row or type(legacy) not in (int, float):
+            raise ValueError('Use width with units instead of combining it with width_mm')
+        width = f'{legacy}mm'
+    else:
+        width = row.get('width', '2mm')
+    match = re.fullmatch(r'\s*(\d+(?:\.\d*)?|\.\d+)\s*(mm|em)\s*', width) if isinstance(width, str) else None
+    if not match:
+        raise ValueError('Separator width must be a positive size such as "2mm" or "0.1em"')
+    amount = float(match[1])
+    if not math.isfinite(amount) or amount <= 0:
+        raise ValueError('Separator width must be positive')
+    return amount, match[2]
 
 
 def render_qr(value, max_width):
@@ -189,12 +200,16 @@ def render(template, values, width=576):
     y = 20
     for row in [{'text': template['title'], 'large': True}] + template['lines']:
         if row.get('separator') is True:
-            dpi = int(os.getenv('PRINTER_DPI', '203'))
-            if dpi <= 0:
-                raise ValueError('PRINTER_DPI must be positive')
-            thickness = separator_width_mm(row) * dpi / 25.4
+            amount, unit = separator_width(row)
+            if unit == 'mm':
+                dpi = int(os.getenv('PRINTER_DPI', '203'))
+                if dpi <= 0:
+                    raise ValueError('PRINTER_DPI must be positive')
+                thickness = amount * dpi / 25.4
+            else:
+                thickness = amount * (heading.size if row.get('large') else font.size)
             if thickness > 15000:
-                raise ValueError('Слишком толстая линия: уменьшите width_mm.')
+                raise ValueError('Слишком толстая линия: уменьшите width.')
             thickness = max(1, round(thickness))
             if y + thickness + 16 > 15000:
                 raise ValueError('Слишком длинный чек: сократите текст.')
