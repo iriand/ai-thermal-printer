@@ -1,10 +1,12 @@
 """Private Telegram -> AI template filling -> raster ESC/POS printer."""
 import argparse
+import base64
 import io
 import json
 import logging
 import os
 from pathlib import Path
+import re
 import secrets
 import socket
 import sqlite3
@@ -14,10 +16,89 @@ import tempfile
 import time
 import unicodedata
 import urllib.request
+import urllib.error
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parent
 MAX_VOICE_BYTES = 10 * 1024 * 1024
+JIRA_KEY = r'[A-Z][A-Z0-9_]*-[1-9][0-9]*'
+JIRA_TEMPLATE = {
+    'title': 'JIRA',
+    'lines': [
+        {'field': 'key', 'large': True},
+        {'field': 'summary', 'large': True},
+        {'field': 'status', 'label': 'Статус: '},
+        {'field': 'assignee', 'label': 'Исполнитель: '},
+        {'field': 'created', 'label': 'Создана: '},
+        {'field': 'due', 'label': 'Срок: '},
+        {'field': 'priority', 'label': 'Приоритет: '},
+        {'field': 'url'}
+    ]
+}
+
+
+class NoJiraRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # Never forward the Jira Authorization header to a redirected host.
+        return None
+
+
+def jira_issue(issue_key):
+    """Read only the receipt fields from Jira Cloud; never pass them to AI."""
+    issue_key = issue_key.upper()
+    if not re.fullmatch(JIRA_KEY, issue_key):
+        raise ValueError('Укажите ключ задачи, например /jira PROJ-123.')
+    base = os.getenv('JIRA_BASE_URL', '').strip().rstrip('/')
+    email = os.getenv('JIRA_EMAIL', '').strip()
+    token = os.getenv('JIRA_API_TOKEN', '').strip()
+    if not base or not email or not token:
+        raise ValueError('Для Jira задайте JIRA_BASE_URL, JIRA_EMAIL и JIRA_API_TOKEN в окружении бота.')
+    if not re.fullmatch(r'https://[a-zA-Z0-9-]+\.atlassian\.net', base):
+        raise ValueError('JIRA_BASE_URL должен иметь вид https://company.atlassian.net.')
+    cloud_id = os.getenv('JIRA_CLOUD_ID', '').strip()
+    if cloud_id and not re.fullmatch(r'[a-zA-Z0-9-]+', cloud_id):
+        raise ValueError('Некорректный JIRA_CLOUD_ID.')
+    api_base = f'https://api.atlassian.com/ex/jira/{cloud_id}' if cloud_id else base
+    fields = 'summary,status,assignee,created,duedate,priority'
+    credentials = base64.b64encode(f'{email}:{token}'.encode()).decode('ascii')
+    request = urllib.request.Request(
+        f'{api_base}/rest/api/3/issue/{issue_key}?fields={fields}',
+        headers={'Authorization': 'Basic ' + credentials, 'Accept': 'application/json'},
+        method='GET')
+    try:
+        with urllib.request.build_opener(NoJiraRedirect()).open(request, timeout=30) as response:
+            issue = json.load(response)
+    except urllib.error.HTTPError as error:
+        messages = {
+            401: 'Jira: проверьте email и API-токен.',
+            403: 'Jira: у аккаунта нет доступа к задаче.',
+            404: 'Jira: задача не найдена или недоступна этому аккаунту.',
+            429: 'Jira: слишком много запросов. Попробуйте позже.'
+        }
+        message = messages.get(error.code, 'Jira временно недоступна. Проверьте настройки и повторите запрос.')
+        error.close()
+        raise ValueError(message) from None
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        raise ValueError('Не удалось получить задачу из Jira. Проверьте подключение и повторите запрос.') from None
+    data = issue['fields']
+    key = clean(issue['key'])
+    if not re.fullmatch(JIRA_KEY, key):
+        raise ValueError('Jira вернула некорректный ключ задачи.')
+
+    def date(value):
+        if not value:
+            return 'Не указан'
+        year, month, day = value[:10].split('-')
+        return f'{day}.{month}.{year}'
+
+    return {
+        'key': key, 'summary': clean(data['summary']),
+        'status': clean((data.get('status') or {}).get('name') or 'Не указан'),
+        'assignee': clean((data.get('assignee') or {}).get('displayName') or 'Не назначен'),
+        'created': date(data.get('created')), 'due': date(data.get('duedate')),
+        'priority': clean((data.get('priority') or {}).get('name') or 'Не указан'),
+        'url': f'{base}/browse/{key}'
+    }
 
 
 def transcribe_voice(audio):
@@ -262,14 +343,19 @@ class Bot:
         return transcribe_voice(audio)
 
     def preview(self, user, chat, session):
-        if not session.get('template') or session.get('asked_field'):
+        if session.get('jira'):
+            template, values = JIRA_TEMPLATE, session['jira']
+        elif not session.get('template') or session.get('asked_field'):
             self.say(chat, 'Сначала выберите шаблон и заполните обязательные поля.')
             return
-        png = render(self.catalog[session['template']], session['values'], int(os.getenv('PRINTER_WIDTH', '576')))
+        else:
+            template, values = self.catalog[session['template']], session['values']
+        png = render(template, values, int(os.getenv('PRINTER_WIDTH', '576')))
         self.store.invalidate(user)
         job = self.store.new_job(user, png)
         self.tg('sendPhoto', {'chat_id': chat,
-            'caption': 'Предпросмотр. Можно исправить поля сообщением или нажать кнопку. Действует 30 минут.'
+            'caption': ('Предпросмотр Jira. /jira KEY-123 — обновить данные. Действует 30 минут.'
+                if session.get('jira') else 'Предпросмотр. Можно исправить поля сообщением или нажать кнопку. Действует 30 минут.')
                 + (' Режим DRY_RUN: бумага не расходуется.' if self.dry else ''),
             'reply_markup': {'inline_keyboard': [[
                 {'text': 'Проверить печать' if self.dry else 'Печатать', 'callback_data': 'print:' + job},
@@ -333,7 +419,7 @@ class Bot:
         if text in ('/start', '/help', '/templates'):
             listing = '\n'.join(f"• {k}: {t['title']} — {t['description']}" for k, t in self.catalog.items())
             self.say(chat_id, 'Напишите или скажите голосом, что печатать. Например: «Наклейка для еды: курица, приготовлено 07.11.2026».\n'
-                'Бот спросит недостающее.\n\n' + listing + '\n\n/preview — показать чек\n/cancel — сбросить\n/id — ваш Telegram ID')
+                'Бот спросит недостающее.\n\n' + listing + '\n\n/jira KEY-123 — чек задачи Jira\n/preview — показать чек\n/cancel — сбросить\n/id — ваш Telegram ID')
             return
         if text == '/id':
             self.say(chat_id, str(user))
@@ -346,6 +432,25 @@ class Bot:
         if text == '/preview':
             self.preview(user, chat_id, session)
             return
+        command = re.match(r'^/jira(?:@\w+)?(?:\s|$)', text, re.IGNORECASE)
+        issue_keys = re.findall(r'(?<![\w-])' + JIRA_KEY + r'(?![\w-])', text.upper())
+        if command or (len(issue_keys) == 1 and not text.startswith('/')):
+            if len(issue_keys) != 1 or (command and not re.fullmatch(JIRA_KEY, text[command.end():].strip().upper())):
+                self.say(chat_id, 'Укажите одну задачу, например /jira PROJ-123.')
+                return
+            try:
+                values = jira_issue(issue_keys[0])
+            except ValueError as error:
+                self.say(chat_id, str(error))
+                return
+            session = {'jira': values}
+            self.store.invalidate(user)
+            self.store.set(key, session)
+            self.preview(user, chat_id, session)
+            return
+        if session.get('jira'):
+            # Jira snapshots must not become AI context or editable issue data.
+            session = {}
         parsed = extract(self.catalog, session, text)
         merged = merge(self.catalog, session, parsed)
         if merged is None:
