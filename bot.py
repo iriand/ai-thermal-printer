@@ -357,7 +357,11 @@ def render(template, values, width=576):
     canvas = Image.new('L', (width, 16000), 255)
     draw = ImageDraw.Draw(canvas)
     y = 20
-    for row in [{'text': template['title'], 'large': True}] + template['lines']:
+    print_source = os.getenv('PRINT_SOURCE_NAME', 'true').strip().lower()
+    if print_source not in ('true', 'false'):
+        raise ValueError('PRINT_SOURCE_NAME must be true or false')
+    rows = ([{'text': template['title'], 'large': True}] if print_source == 'true' else []) + template['lines']
+    for row in rows:
         if row.get('separator') is True:
             amount, unit = separator_width(row)
             if unit == 'mm':
