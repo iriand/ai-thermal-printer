@@ -1,4 +1,26 @@
 {
+  "word": {
+    "source": "word",
+    "title": "СЛОВО",
+    "description": "Словарная карточка на выбранном языке: слово часа или указанное пользователем слово, русский перевод и пример использования. Название языка само по себе означает запрос слова часа.",
+    "fields": {
+      "language": {"question": "На каком языке? Итальянский, английский, иврит, французский, немецкий, испанский или русский?"},
+      "word": {"required": false, "question": "Какое слово разобрать? Без слова используется Word of The Hour."}
+    },
+    "lines": [
+      {"field": "language"},
+      {"separator": true, "width": "0.3mm"},
+      {"field": "word", "large": true},
+      {"field": "translation_ru", "large": true},
+      {"separator": true, "width": "0.3mm"},
+      {"text": "Пример:"},
+      {"field": "example"},
+      {"field": "example_ru"},
+      {"separator": true, "width": "0.3mm"},
+      {"field": "provider"},
+      {"field": "notes"}
+    ]
+  },
   "weather": {
     "source": "weather",
     "title": "ПОГОДА НА ДЕНЬ",
