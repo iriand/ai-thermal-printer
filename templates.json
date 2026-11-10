@@ -11,14 +11,15 @@
       {"field": "language"},
       {"separator": true, "width": "0.3mm"},
       {"field": "word", "large": true},
+      {"field": "pronunciation"},
       {"field": "translation_ru", "large": true},
       {"separator": true, "width": "0.3mm"},
       {"text": "Пример:"},
       {"field": "example"},
       {"field": "example_ru"},
-      {"separator": true, "width": "0.3mm"},
-      {"field": "provider"},
-      {"field": "notes"}
+      {"separator": true, "width": "0.3mm", "hide": true},
+      {"field": "provider","hide": true},
+      {"field": "notes","hide": true}
     ]
   },
   "weather": {

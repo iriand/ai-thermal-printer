@@ -1,4 +1,5 @@
 import io
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -16,7 +17,7 @@ import vocabulary
 
 FEED = {'id': 123, 'english': 'window', 'italian': 'finestrino', 'italian_edit': 'finestra',
         'russian': 'окно', 'italian_sentence': 'Apri la finestra.', 'english_definitions': ['An opening in a wall.']}
-CARD = {'valid': True, 'word': 'finestra', 'translation_ru': 'окно',
+CARD = {'valid': True, 'word': 'finestra', 'pronunciation': 'fi·nè·stra', 'translation_ru': 'окно',
         'example': 'Apri la finestra.', 'example_ru': 'Открой окно.'}
 
 
@@ -68,7 +69,9 @@ class VocabularyTests(unittest.TestCase):
         self.assertTrue(payload['text']['format']['strict'])
         self.assertFalse(payload['store'])
         self.assertEqual(first['provider'], 'Word of The Hour')
-        self.assertEqual(first['notes'], 'Перевод примера: AI')
+        self.assertEqual(first['notes'], 'Перевод примера: AI; Произношение: AI')
+        self.assertEqual(first['pronunciation'], 'fi·nè·stra')
+        self.assertIn('pronunciation', payload['text']['format']['schema']['required'])
 
     def test_requested_word_bypasses_service_and_marks_ai_content(self):
         api = Mock(return_value=response(CARD))
@@ -79,8 +82,22 @@ class VocabularyTests(unittest.TestCase):
         self.assertIn('Перевод: AI', card['notes'])
         self.assertIn('Пример: AI', card['notes'])
 
+    def test_old_cached_card_without_pronunciation_is_regenerated(self):
+        store = MemoryStore()
+        api = Mock(return_value=response(CARD))
+        with patch.dict(os.environ, {'OPENAI_API_KEY': 'dummy'}), patch.object(vocabulary, 'current_word', return_value=FEED):
+            vocabulary.word_card(MemoryStore(), 'it', '', api)
+            payload = api.call_args.args[1]
+            old_key = 'woth:card:' + hashlib.sha256(json.dumps([
+                json.loads(payload['input']), payload['model']], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+            store.set(old_key, {'word': 'finestra', 'translation_ru': 'окно'})
+            api.reset_mock()
+            card = vocabulary.word_card(store, 'it', '', api)
+        api.assert_called_once()
+        self.assertEqual(card['pronunciation'], 'fi·nè·stra')
+
     def test_missing_hebrew_translation_uses_source_english_and_labels_it(self):
-        translated = dict(CARD, word='חלון', example='פתח את החלון.')
+        translated = dict(CARD, word='חלון', pronunciation='kha·LON', example='פתח את החלון.')
         api = Mock(return_value=response(translated))
         with patch.dict(os.environ, {'OPENAI_API_KEY': 'dummy'}), patch.object(vocabulary, 'current_word', return_value=FEED):
             card = vocabulary.word_card(MemoryStore(), 'he', '', api)
@@ -91,7 +108,7 @@ class VocabularyTests(unittest.TestCase):
         self.assertIn('AI-перевод', card['notes'])
 
     def test_model_cannot_change_supplied_word_or_service_data(self):
-        for changes in [{'word': 'porta'}, {'translation_ru': 'дверь'}, {'example': 'Changed'}, {'valid': False}, {'example_ru': ''}]:
+        for changes in [{'word': 'porta'}, {'translation_ru': 'дверь'}, {'example': 'Changed'}, {'valid': False}, {'example_ru': ''}, {'pronunciation': ''}]:
             with self.subTest(changes=changes), patch.dict(os.environ, {'OPENAI_API_KEY': 'dummy'}), patch.object(vocabulary, 'current_word', return_value=FEED):
                 with self.assertRaises(ValueError):
                     vocabulary.word_card(MemoryStore(), 'it', '', Mock(return_value=response(dict(CARD, **changes))))
