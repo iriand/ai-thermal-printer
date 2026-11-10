@@ -7,7 +7,7 @@
       "issue_key": {"question": "Какой ключ задачи Jira? Например, PROJ-123."}
     },
     "lines": [
-      {"field": "key", "large": true, "invert": true},
+      {"field": "key", "icon": "issue_icon", "large": true, "invert": true},
       {"field": "summary", "large": true},
       {"separator": true, "width": "0.5mm"},
       {"field": "status", "label": "Статус: "},

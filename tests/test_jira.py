@@ -18,7 +18,7 @@ ENV = {'JIRA_BASE_URL': 'https://example.atlassian.net/',
 ISSUE = {'key': 'APP-123', 'fields': {
     'summary': 'Ошибка входа', 'status': {'name': 'В работе'},
     'assignee': {'displayName': 'Андрей'}, 'created': '2026-11-10T12:00:00.000+0200',
-    'duedate': '2026-11-15', 'priority': {'name': 'High'}}}
+    'duedate': '2026-11-15', 'priority': {'name': 'High'}, 'issuetype': {'name': 'Bug', 'subtask': False}}}
 
 
 class JiraTests(unittest.TestCase):
@@ -29,12 +29,14 @@ class JiraTests(unittest.TestCase):
             result = bot.jira_issue('app-123')
         request = build.return_value.open.call_args.args[0]
         self.assertEqual(request.get_method(), 'GET')
-        self.assertEqual(request.full_url, 'https://example.atlassian.net/rest/api/3/issue/APP-123?fields=summary,status,assignee,created,duedate,priority')
+        self.assertEqual(request.full_url, 'https://example.atlassian.net/rest/api/3/issue/APP-123?fields=summary,status,assignee,created,duedate,priority,issuetype')
         self.assertEqual(request.get_header('Authorization'), 'Basic ' + base64.b64encode(b'owner@example.com:fixture-token').decode())
         self.assertEqual(result['assignee'], 'Андрей')
         self.assertEqual(result['created'], '10.11.2026')
         self.assertEqual(result['due'], '15.11.2026')
         self.assertEqual(result['url'], 'https://example.atlassian.net/browse/APP-123')
+        self.assertEqual(result['issue_type'], 'Bug')
+        self.assertEqual(result['issue_icon'], 'bug')
 
     def test_scoped_token_gateway_and_missing_fields(self):
         issue = {'key': 'APP-123', 'fields': {'summary': 'Test'}}
@@ -44,6 +46,7 @@ class JiraTests(unittest.TestCase):
         self.assertTrue(build.return_value.open.call_args.args[0].full_url.startswith('https://api.atlassian.com/ex/jira/cloud-123/'))
         self.assertEqual(result['assignee'], 'Не назначен')
         self.assertEqual(result['due'], 'Не указан')
+        self.assertEqual(result['issue_icon'], 'generic')
 
     def test_invalid_configuration_and_keys_never_request(self):
         for changes, key in [({'JIRA_API_TOKEN': ''}, 'APP-123'),

@@ -18,13 +18,16 @@ import time
 import unicodedata
 import urllib.request
 import urllib.error
+import urllib.parse
+import xml.etree.ElementTree as ET
 import qrcode
+import resvg_py
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 ROOT = Path(__file__).resolve().parent
 MAX_VOICE_BYTES = 10 * 1024 * 1024
 JIRA_KEY = r'[A-Z][A-Z0-9_]*-[1-9][0-9]*'
-JIRA_RECEIPT_FIELDS = {'key', 'summary', 'status', 'assignee', 'created', 'due', 'priority', 'url'}
+JIRA_RECEIPT_FIELDS = {'key', 'summary', 'status', 'assignee', 'created', 'due', 'priority', 'url', 'issue_type', 'issue_icon'}
 
 
 class NoJiraRedirect(urllib.request.HTTPRedirectHandler):
@@ -49,7 +52,7 @@ def jira_issue(issue_key):
     if cloud_id and not re.fullmatch(r'[a-zA-Z0-9-]+', cloud_id):
         raise ValueError('Некорректный JIRA_CLOUD_ID.')
     api_base = f'https://api.atlassian.com/ex/jira/{cloud_id}' if cloud_id else base
-    fields = 'summary,status,assignee,created,duedate,priority'
+    fields = 'summary,status,assignee,created,duedate,priority,issuetype'
     credentials = base64.b64encode(f'{email}:{token}'.encode()).decode('ascii')
     request = urllib.request.Request(
         f'{api_base}/rest/api/3/issue/{issue_key}?fields={fields}',
@@ -81,8 +84,11 @@ def jira_issue(issue_key):
         year, month, day = value[:10].split('-')
         return f'{day}.{month}.{year}'
 
+    issue_type = data.get('issuetype') or {}
+    type_name = clean(issue_type.get('name') or 'Не указан')
     return {
         'key': key, 'summary': clean(data['summary']),
+        'issue_type': type_name, 'issue_icon': jira_type_icon(issue_type, base, api_base, 'Basic ' + credentials),
         'status': clean((data.get('status') or {}).get('name') or 'Не указан'),
         'assignee': clean((data.get('assignee') or {}).get('displayName') or 'Не назначен'),
         'created': date(data.get('created')), 'due': date(data.get('duedate')),
@@ -153,6 +159,8 @@ def templates():
                 raise ValueError('Unknown field in template')
             if 'qr' in row and (row['qr'] not in available or 'field' in row or 'text' in row):
                 raise ValueError('Invalid QR field in template')
+            if 'icon' in row and (row['icon'] not in available or 'field' not in row or 'qr' in row or 'separator' in row):
+                raise ValueError('Invalid icon field in template')
     return data
 
 
@@ -187,6 +195,157 @@ def render_qr(value, max_width):
         raise ValueError('QR-код слишком большой для этой ширины бумаги: сократите ссылку.')
     qr.box_size = module_size
     return qr.make_image(fill_color='black', back_color='white').convert('L')
+
+
+def issue_icon_kind(name, subtask=False):
+    if subtask:
+        return 'subtask'
+    aliases = {
+        'bug': 'bug', 'ошибка': 'bug', 'дефект': 'bug', 'баг': 'bug',
+        'epic': 'epic', 'эпик': 'epic',
+        'story': 'story', 'user story': 'story', 'история': 'story',
+        'task': 'task', 'задача': 'task',
+        'sub-task': 'subtask', 'subtask': 'subtask', 'подзадача': 'subtask',
+        'improvement': 'improvement', 'улучшение': 'improvement',
+        'test': 'test', 'тест': 'test',
+        'service request': 'service_request', 'запрос на обслуживание': 'service_request',
+        'problem': 'problem', 'проблема': 'problem',
+        'change': 'change', 'изменение': 'change',
+        'incident': 'incident', 'инцидент': 'incident'
+    }
+    return aliases.get(name.strip().casefold(), 'generic')
+
+
+def normalize_jira_icon(content):
+    if len(content) > 128 * 1024:
+        raise ValueError('Oversized Jira icon')
+    if b'<svg' in content[:1024].lower():
+        # Icons are self-contained: do not resolve files, external images or CSS.
+        if b'<!doctype' in content.lower() or b'<!entity' in content.lower():
+            raise ValueError('Invalid SVG icon')
+        root = ET.fromstring(content)
+        if root.tag.split('}')[-1] != 'svg':
+            raise ValueError('Invalid SVG icon')
+        for node in root.iter():
+            if node.tag.split('}')[-1] in ('image', 'style', 'script', 'foreignObject'):
+                raise ValueError('Unsupported SVG icon content')
+            for key, value in node.attrib.items():
+                if key.split('}')[-1] == 'href' and not value.startswith('#'):
+                    raise ValueError('External SVG reference')
+                for reference in re.findall(r'url\(([^)]*)\)', value, re.IGNORECASE):
+                    if not reference.strip().strip('\"\x27').startswith('#'):
+                        raise ValueError('External SVG resource')
+        content = resvg_py.svg_to_bytes(svg_string=ET.tostring(root, encoding='unicode'), width=64, height=64)
+    with Image.open(io.BytesIO(content)) as source:
+        if max(source.size) > 512:
+            raise ValueError('Oversized Jira icon dimensions')
+        rgba = ImageOps.contain(source.convert('RGBA'), (64, 64))
+    flattened = Image.new('RGBA', rgba.size, 'white')
+    flattened.alpha_composite(rgba)
+    gray = ImageOps.autocontrast(flattened.convert('L')).convert('1', dither=Image.Dither.NONE)
+    output = io.BytesIO()
+    gray.save(output, 'PNG')
+    return 'png:' + base64.b64encode(output.getvalue()).decode('ascii')
+
+
+def jira_type_icon(issue_type, base, api_base, authorization):
+    fallback = issue_icon_kind(issue_type.get('name') or '', issue_type.get('subtask', False))
+    avatar = issue_type.get('avatarId')
+    url = issue_type.get('iconUrl', '')
+    if type(avatar) is int and avatar > 0:
+        url = f'{api_base}/rest/api/3/universal_avatar/view/type/issuetype/avatar/{avatar}?size=large'
+    if not url:
+        return fallback
+    try:
+        parts = urllib.parse.urlsplit(url)
+        site = urllib.parse.urlsplit(base)
+        gateway = urllib.parse.urlsplit(api_base)
+        is_site = parts.netloc == site.netloc
+        is_gateway = parts.netloc == gateway.netloc and parts.path.startswith(gateway.path + '/')
+        if parts.scheme != 'https' or not (is_site or is_gateway) or any(c in url for c in ('\\', '\r', '\n')):
+            return fallback
+        # Scoped tokens use the gateway for authenticated avatar API requests.
+        if is_site and parts.path.startswith('/rest/api/'):
+            url = api_base + parts.path + ('?' + parts.query if parts.query else '')
+        headers = {'Accept': 'image/png,image/svg+xml,image/*'}
+        if '/rest/api/' in parts.path or parts.path == '/secure/viewavatar':
+            headers['Authorization'] = authorization
+        request = urllib.request.Request(url, headers=headers, method='GET')
+        with urllib.request.build_opener(NoJiraRedirect()).open(request, timeout=10) as response:
+            content = response.read(128 * 1024 + 1)
+        return normalize_jira_icon(content)
+    except urllib.error.HTTPError as error:
+        error.close()
+    except Exception:
+        # An unavailable or malformed icon must not prevent printing the issue.
+        pass
+    return fallback
+
+
+def render_issue_icon(kind, size):
+    """Render the stored Jira icon, with local monochrome fallback pictograms."""
+    if isinstance(kind, str) and kind.startswith('png:'):
+        try:
+            with Image.open(io.BytesIO(base64.b64decode(kind[4:], validate=True))) as source:
+                icon = ImageOps.contain(source.convert('L'), (size, size), Image.Resampling.NEAREST)
+            result = Image.new('L', (size, size), 255)
+            result.paste(icon, ((size - icon.width) // 2, (size - icon.height) // 2))
+            return result
+        except Exception:
+            kind = 'generic'
+    image = Image.new('L', (size, size), 255)
+    draw = ImageDraw.Draw(image)
+    stroke = max(1, round(size / 12))
+
+    def points(items):
+        return [(round(x * (size - 1) / 24), round(y * (size - 1) / 24)) for x, y in items]
+
+    def line(items):
+        draw.line(points(items), fill=0, width=stroke)
+
+    def rectangle(bounds):
+        draw.rectangle(points(bounds), outline=0, width=stroke)
+
+    if kind == 'bug':
+        for y in (9, 14, 19):
+            line([(2, y - 2), (7, y), (17, y), (22, y - 2)])
+        line([(8, 2), (10, 6), (14, 6), (16, 2)])
+        draw.ellipse(points([(7, 5), (17, 22)]), fill=0)
+        draw.line(points([(12, 10), (12, 19)]), fill=255, width=stroke)
+    elif kind == 'epic':
+        draw.polygon(points([(12, 1), (4, 14), (11, 14), (8, 23), (21, 9), (14, 9), (18, 1)]), fill=0)
+    elif kind == 'story':
+        line([(12, 5), (7, 3), (2, 3), (2, 20), (7, 20), (12, 22),
+              (17, 20), (22, 20), (22, 3), (17, 3), (12, 5), (12, 22)])
+    elif kind == 'task':
+        rectangle([(2, 2), (22, 22)])
+        line([(6, 12), (10, 16), (18, 7)])
+    elif kind == 'subtask':
+        rectangle([(2, 2), (15, 15)])
+        rectangle([(9, 9), (22, 22)])
+    elif kind == 'improvement':
+        line([(4, 14), (12, 5), (20, 14)])
+        line([(4, 21), (12, 12), (20, 21)])
+    elif kind == 'test':
+        line([(8, 2), (16, 2), (16, 6), (13, 6), (13, 12), (21, 21), (3, 21), (11, 12), (11, 6), (8, 6), (8, 2)])
+        line([(8, 16), (16, 16)])
+    elif kind == 'service_request':
+        rectangle([(2, 5), (22, 19)])
+        line([(2, 5), (12, 13), (22, 5)])
+    elif kind == 'problem':
+        line([(12, 2), (23, 22), (1, 22), (12, 2)])
+        line([(12, 8), (12, 15)])
+        draw.ellipse(points([(11, 18), (13, 20)]), fill=0)
+    elif kind == 'change':
+        line([(3, 8), (21, 8), (16, 3)])
+        line([(21, 16), (3, 16), (8, 21)])
+    elif kind == 'incident':
+        draw.ellipse(points([(3, 3), (21, 21)]), outline=0, width=stroke)
+        line([(12, 7), (12, 14)])
+        draw.ellipse(points([(11, 17), (13, 19)]), fill=0)
+    else:
+        draw.polygon(points([(12, 1), (23, 12), (12, 23), (1, 12)]), outline=0, width=stroke)
+    return image
 
 
 def render(template, values, width=576):
@@ -228,15 +387,20 @@ def render(template, values, width=576):
         text = (row.get('label', '') + values.get(row['field'], '')) if 'field' in row else row.get('text', '')
         current_font = heading if row.get('large') else font
         row_start = y
+        left = 20
+        if 'icon' in row:
+            size = 28 if row.get('large') else 22
+            canvas.paste(render_issue_icon(values.get(row['icon'], 'generic'), size), (20, y + 6))
+            left += size + 8
         for paragraph in text.split('\n'):
             line = ''
             for char in paragraph:
-                if draw.textlength(line + char, font=current_font) > width - 40:
-                    draw.text((20, y), line, fill=0, font=current_font)
+                if draw.textlength(line + char, font=current_font) > width - 20 - left:
+                    draw.text((left, y), line, fill=0, font=current_font)
                     y += 44 if row.get('large') else 36
                     line = ''
                 line += char
-            draw.text((20, y), line, fill=0, font=current_font)
+            draw.text((left, y), line, fill=0, font=current_font)
             y += 44 if row.get('large') else 36
             if y > 15000:
                 raise ValueError('Слишком длинный чек: сократите текст.')
