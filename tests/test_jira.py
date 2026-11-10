@@ -68,6 +68,7 @@ class JiraTests(unittest.TestCase):
     def test_jira_text_voice_preview_and_authorization(self):
         with tempfile.TemporaryDirectory() as directory:
             instance = bot.Bot.__new__(bot.Bot)
+            instance.catalog = bot.templates()
             instance.allowed = {1}
             instance.store = bot.Store(Path(directory) / 'state.db')
             self.addCleanup(instance.store.db.close)
@@ -81,7 +82,7 @@ class JiraTests(unittest.TestCase):
                 instance.handle({'message': dict(message, voice={'file_id': 'voice', 'duration': 5})})
                 self.assertEqual(fetch.call_count, 5)
                 self.assertEqual(instance.preview.call_count, 5)
-                self.assertEqual(instance.store.get('session:1'), {'jira': {'key': 'APP-123'}})
+                self.assertEqual(instance.store.get('session:1'), {'template': 'jira', 'jira': {'key': 'APP-123'}})
                 instance.handle({'message': dict(message, text='/preview')})
                 self.assertEqual(fetch.call_count, 5)
                 instance.handle({'message': dict(message, text='/jira')})
@@ -93,6 +94,7 @@ class JiraTests(unittest.TestCase):
     def test_snapshot_renders_and_uses_existing_print_confirmation(self):
         with tempfile.TemporaryDirectory() as directory:
             instance = bot.Bot.__new__(bot.Bot)
+            instance.catalog = bot.templates()
             instance.store = bot.Store(Path(directory) / 'state.db')
             self.addCleanup(instance.store.db.close)
             instance.dry = True
@@ -108,6 +110,7 @@ class JiraTests(unittest.TestCase):
 
     def test_failed_fetch_keeps_previous_draft_and_buttons(self):
         instance = bot.Bot.__new__(bot.Bot)
+        instance.catalog = bot.templates()
         instance.allowed = {1}
         instance.store = Mock()
         instance.store.get.return_value = {'template': 'note', 'values': {'text': 'Keep me'}}
@@ -119,6 +122,55 @@ class JiraTests(unittest.TestCase):
         instance.store.invalidate.assert_not_called()
         instance.preview.assert_not_called()
         instance.say.assert_called_once_with(1, 'Задача недоступна')
+
+    def test_ai_selects_jira_and_asks_for_missing_key(self):
+        with tempfile.TemporaryDirectory() as directory:
+            instance = bot.Bot.__new__(bot.Bot)
+            instance.catalog = bot.templates()
+            instance.allowed = {1}
+            instance.store = bot.Store(Path(directory) / 'state.db')
+            self.addCleanup(instance.store.db.close)
+            instance.say = Mock()
+            instance.preview = Mock()
+            message = {'from': {'id': 1}, 'chat': {'id': 1, 'type': 'private'}, 'text': 'Распечатай баг из Джиры'}
+            with patch.object(bot, 'extract', return_value={'template': 'jira', 'values': []}), patch.object(bot, 'jira_issue') as fetch:
+                instance.handle({'message': message})
+                fetch.assert_not_called()
+            self.assertEqual(instance.store.get('session:1')['asked_field'], 'issue_key')
+            instance.say.assert_called_with(1, instance.catalog['jira']['fields']['issue_key']['question'])
+            # AI can resolve a follow-up without a literal key in the message.
+            message['text'] = 'APP, номер сто двадцать три'
+            parsed = {'template': 'jira', 'values': [{'field': 'issue_key', 'value': 'APP-123'}]}
+            with patch.object(bot, 'extract', return_value=parsed) as extract, patch.object(bot, 'jira_issue', return_value={'key': 'APP-123'}) as fetch:
+                instance.handle({'message': message})
+                self.assertEqual(extract.call_args.args[1]['asked_field'], 'issue_key')
+                fetch.assert_called_once_with('APP-123')
+            instance.preview.assert_called_once_with(1, 1, {'template': 'jira', 'jira': {'key': 'APP-123'}})
+
+    def test_ai_catalog_includes_jira_but_cannot_fill_fetched_fields(self):
+        catalog = bot.templates()
+        result = {'status': 'completed', 'output': [{'content': [{'type': 'output_text', 'text': json.dumps({
+            'template': 'jira', 'values': [{'field': 'issue_key', 'value': 'APP-123'}]})}]}]}
+        with patch.dict(os.environ, {'OPENAI_API_KEY': 'dummy'}), patch.object(bot, 'api', return_value=result) as api:
+            parsed = bot.extract(catalog, {}, 'Хочу распечатать задачу')
+        payload = api.call_args.args[1]
+        self.assertIn('jira', payload['text']['format']['schema']['properties']['template']['anyOf'][0]['enum'])
+        self.assertEqual(json.loads(payload['input'])['catalog']['jira']['source'], 'jira')
+        self.assertIsNone(bot.merge(catalog, {}, parsed)['asked_field'])
+        with self.assertRaises(ValueError):
+            bot.merge(catalog, {}, {'template': 'jira', 'values': [{'field': 'assignee', 'value': 'Invented'}]})
+
+    def test_jira_layout_comes_from_catalog_including_custom_template_name(self):
+        instance = bot.Bot.__new__(bot.Bot)
+        layout = dict(bot.templates()['jira'], title='MY BUG', lines=[{'field': 'summary'}])
+        instance.catalog = {'bug': layout}
+        instance.store = Mock()
+        instance.store.new_job.return_value = 'job-123'
+        instance.dry = True
+        instance.tg = Mock()
+        with patch.object(bot, 'render', return_value=b'png') as render:
+            instance.preview(1, 1, {'template': 'bug', 'jira': {'summary': 'Title'}})
+        render.assert_called_once_with(layout, {'summary': 'Title'}, int(os.getenv('PRINTER_WIDTH', '576')))
 
 
 if __name__ == '__main__':
