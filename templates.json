@@ -35,7 +35,7 @@
       {"separator": true, "width": "1mm"},
       {"field": "summary", "large": true},
       {"separator": true, "width": "0.5mm"},
-      {"field": "status", "label": "Статус: "},
+      {"field": "status", "label": "Статус: ", "hide": true},
       {"field": "assignee", "label": "Исполнитель: "},
       {"field": "created", "label": "Создана: "},
       {"field": "due", "label": "Срок: "},
