@@ -9,7 +9,7 @@
     "lines": [
       {"field": "key", "large": true, "invert": true},
       {"field": "summary", "large": true},
-      {"separator": true, "width": "2mm"},
+      {"separator": true, "width": "0.5mm"},
       {"field": "status", "label": "Статус: "},
       {"field": "assignee", "label": "Исполнитель: "},
       {"field": "created", "label": "Создана: "},
