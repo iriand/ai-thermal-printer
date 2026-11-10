@@ -17,6 +17,7 @@ import time
 import unicodedata
 import urllib.request
 import urllib.error
+import qrcode
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parent
@@ -145,7 +146,24 @@ def templates():
         for row in item['lines']:
             if row.get('field') and row['field'] not in available:
                 raise ValueError('Unknown field in template')
+            if 'qr' in row and (row['qr'] not in available or 'field' in row or 'text' in row):
+                raise ValueError('Invalid QR field in template')
     return data
+
+
+def render_qr(value, max_width):
+    qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=1, border=4)
+    qr.add_data(value)
+    try:
+        qr.make(fit=True)
+    except qrcode.exceptions.DataOverflowError:
+        raise ValueError('Слишком длинное значение для QR-кода.') from None
+    # Whole pixels per module and a four-module quiet zone keep thermal QR codes readable.
+    module_size = min(6, max_width // len(qr.get_matrix()))
+    if module_size < 3:
+        raise ValueError('QR-код слишком большой для этой ширины бумаги: сократите ссылку.')
+    qr.box_size = module_size
+    return qr.make_image(fill_color='black', back_color='white').convert('L')
 
 
 def render(template, values, width=576):
@@ -158,6 +176,15 @@ def render(template, values, width=576):
     draw = ImageDraw.Draw(canvas)
     y = 20
     for row in [{'text': template['title'], 'large': True}] + template['lines']:
+        if 'qr' in row:
+            value = values.get(row['qr'], '')
+            if value:
+                code = render_qr(value, width - 40)
+                if y + code.height > 15000:
+                    raise ValueError('Слишком длинный чек: сократите текст.')
+                canvas.paste(code, ((width - code.width) // 2, y))
+                y += code.height + 8
+            continue
         text = (row.get('label', '') + values.get(row['field'], '')) if 'field' in row else row.get('text', '')
         current_font = heading if row.get('large') else font
         for paragraph in text.split('\n'):

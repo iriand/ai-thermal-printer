@@ -7,14 +7,14 @@
       "issue_key": {"question": "Какой ключ задачи Jira? Например, PROJ-123."}
     },
     "lines": [
-      {"field": "key", "large": true},
+      {"field": "key", "large": true, "invert": true},
       {"field": "summary", "large": true},
       {"field": "status", "label": "Статус: "},
       {"field": "assignee", "label": "Исполнитель: "},
       {"field": "created", "label": "Создана: "},
       {"field": "due", "label": "Срок: "},
       {"field": "priority", "label": "Приоритет: "},
-      {"field": "url"}
+      {"qr": "url"}
     ]
   },
   "food": {
