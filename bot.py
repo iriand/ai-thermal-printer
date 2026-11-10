@@ -18,7 +18,7 @@ import unicodedata
 import urllib.request
 import urllib.error
 import qrcode
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 ROOT = Path(__file__).resolve().parent
 MAX_VOICE_BYTES = 10 * 1024 * 1024
@@ -187,6 +187,7 @@ def render(template, values, width=576):
             continue
         text = (row.get('label', '') + values.get(row['field'], '')) if 'field' in row else row.get('text', '')
         current_font = heading if row.get('large') else font
+        row_start = y
         for paragraph in text.split('\n'):
             line = ''
             for char in paragraph:
@@ -199,6 +200,11 @@ def render(template, values, width=576):
             y += 44 if row.get('large') else 36
             if y > 15000:
                 raise ValueError('Слишком длинный чек: сократите текст.')
+        if row.get('invert', False):
+            # Invert this row only, including wrapped lines, while preserving paper margins.
+            bounds = (20, row_start, width - 20, y)
+            band = canvas.crop(bounds).convert('1', dither=Image.Dither.NONE).convert('L')
+            canvas.paste(ImageOps.invert(band), bounds)
         y += 8
     result = canvas.crop((0, 0, width, y + 30)).convert('1', dither=Image.Dither.NONE)
     buf = io.BytesIO()
